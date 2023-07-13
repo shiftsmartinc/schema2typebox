@@ -1,3 +1,5 @@
+import type { EnumModeOption, PackageName } from "./schema-to-typebox";
+
 import * as prettier from "prettier";
 import { cosmiconfig } from "cosmiconfig";
 import { schema2typebox as Schema2Typebox } from "./schema-to-typebox";
@@ -7,6 +9,10 @@ export type Schema2TypeboxOptions = {
    * The given JSON schema as utf-8 encoded string.
    */
   input: string;
+
+  enumMode?: EnumModeOption;
+
+  packageName?: PackageName;
 };
 
 /**
@@ -20,8 +26,9 @@ export type Schema2TypeboxOptions = {
 // TODO: perhaps check if we can stream the generation(for fun and practice)
 export const schema2typebox = async ({
   input,
+  ...rest
 }: Schema2TypeboxOptions): Promise<string> => {
-  const generatedTypeboxCode = await Schema2Typebox(input);
+  const generatedTypeboxCode = await Schema2Typebox(input, { ...rest });
 
   // TODO: create a "pipeline" for processing
   // post-processing
