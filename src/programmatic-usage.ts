@@ -45,6 +45,11 @@ export const schema2typebox = async ({
   return result;
 };
 
+let additionalHeader = ``;
+export const setAdditionalHeader = (header: string) => {
+  additionalHeader = header;
+};
+
 /**
  * Declaring this as an object with a function in order to make it better
  * testable with mocks. Allows for tracking the call count.
@@ -58,7 +63,9 @@ export const addCommentThatCodeIsGenerated = {
  * you use to generate this file instead. The default file is called
  * "schema.json", perhaps have a look there! :]
  */
-
+${!!additionalHeader && `
+${additionalHeader}
+`}
 ${code}`;
   },
 };
