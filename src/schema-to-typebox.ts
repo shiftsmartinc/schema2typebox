@@ -7,6 +7,7 @@ import { capitalize } from "./utils";
 export const schema2typebox = async (jsonSchema: string, opts?: { enumMode?: EnumModeOption, packageName?: PackageName }) => {
   if(opts?.enumMode) enumMode = opts.enumMode;
   if(opts?.packageName) packageName = opts.packageName;
+
   const schemaObj = JSON.parse(jsonSchema);
   const dereferencedSchemaObj = await $Refparser.dereference(schemaObj);
   updateRequiredImports(packageName, ["Type", "Static"]);
