@@ -204,7 +204,8 @@ export const resetRequiredImports = () => {
 export const collect = (
   schemaObj: Record<string, any>,
   requiredAttributes: string[] = [],
-  propertyName?: string
+  propertyName?: string,
+  itemPath?: string[]
 ): string => {
   const schemaOptions = getSchemaOptions(schemaObj).reduce<Record<string, any>>(
     (prev, [optionName, optionValue]) => {
@@ -225,12 +226,12 @@ export const collect = (
     const absolutePath = process.cwd() + "/" + relativePath;
     const schemaObjAsString = fs.readFileSync(absolutePath, "utf-8");
     const parsedSchemaObj = JSON.parse(schemaObjAsString);
-    return collect(parsedSchemaObj, requiredAttributes, propertyName);
+    return collect(parsedSchemaObj, requiredAttributes, propertyName, buildPropertyPath(propertyName, itemPath));
   }
 
   if (isEnumSchemaObj(schemaObj)) {
-    if (propertyName === undefined) {
-      throw new Error("cant create enum without propertyName");
+    if (propertyName === undefined && !itemPath?.length) {
+      throw new Error("cant create enum without propertyName or path");
     }
     const enumValues = schemaObj.enum;
     const enumKeys = enumValues.map((currItem) =>
@@ -239,7 +240,7 @@ export const collect = (
     const pairs = zip(enumKeys, enumValues);
 
     // create typescript enum
-    const enumName = createEnumName(propertyName);
+    const enumName = createEnumName(buildPropertyPath(propertyName, itemPath));
     const enumInTypescript =
       pairs.reduce<string>((prev, [enumKey, enumValue]) => {
         const correctEnumValue =
@@ -250,7 +251,7 @@ export const collect = (
       }, `export enum ${enumName} {\n`) + "}";
 
     // create typescript union
-    const unionName = createUnionName(propertyName);
+    const unionName = createUnionName(buildPropertyPath(propertyName, itemPath));
     const unionInTypescript =
       enumValues.reduce((prev, enumValue) => {
         const correctEnumValue =
@@ -365,15 +366,19 @@ export const collect = (
     // TODO: replace "as string[]" here
     const requiredAttributesOfObject = (schemaObj["required"] ??
       []) as string[];
-    const typeboxForProperties = propertiesOfObj.map(
-      ([propertyName, property]) => {
-        return collect(property, requiredAttributesOfObject, propertyName);
-      }
-    );
+
+    let typeboxForProperties;
+    let typeboxType = "Object";
+
+    if (propertiesOfObj) {
+      typeboxForProperties = propertiesOfObj.map(([propertyName, property]) => {
+        return collect(property, requiredAttributesOfObject, propertyName, buildPropertyPath(propertyName, itemPath));
+      });
+    }
     // propertyName will only be undefined for the "top level" schemaObj
     return propertyName === undefined
-      ? `Type.Object({\n${typeboxForProperties}})`
-      : `${propertyName}: Type.Object({\n${typeboxForProperties}})`;
+      ? `Type.${typeboxType}({\n${typeboxForProperties}})`
+      : `${propertyName}: Type.${typeboxType}({\n${typeboxForProperties}})`;
   } else if (
     type === "string" ||
     type === "number" ||
