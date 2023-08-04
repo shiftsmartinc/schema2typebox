@@ -359,7 +359,7 @@ export const collect = (
     return result + "\n";
   }
 
-  const type = getType(schemaObj);
+  const type = getType(schemaObj, propertyName);
   if (type === "object") {
     // console.log("type was object");
     const propertiesOfObj = getProperties(schemaObj);
@@ -370,7 +370,15 @@ export const collect = (
     let typeboxForProperties;
     let typeboxType = "Object";
 
-    if (propertiesOfObj) {
+    if (!propertiesOfObj) {
+      console.warn('This logic disabled for testing')
+      typeboxForProperties = `Type.String(),\nType.Unknown()\n`;
+      typeboxType = "Record";
+      // Handle an "unknown" as a "record" type; could make configurable...
+      return propertyName === undefined
+        ? `Type.${typeboxType}(\n${typeboxForProperties})`
+        : `${propertyName}: Type.${typeboxType}(\n${typeboxForProperties})`;
+    } else {
       typeboxForProperties = propertiesOfObj.map(([propertyName, property]) => {
         return collect(property, requiredAttributesOfObject, propertyName, buildPropertyPath(propertyName, itemPath));
       });
@@ -425,14 +433,30 @@ export const collect = (
       );
     }
 
+    const itemPropertyName = `${propertyName}Item`;
     let result = "";
     if (Object.keys(schemaOptions).length > 0) {
       result = `Type.Array(${collect(itemsSchemaObj)}, (${JSON.stringify(
         schemaOptions
       )}))`;
+      result = `Type.Array(${collect(
+        itemsSchemaObj,
+        undefined,
+        undefined, 
+        buildPropertyPath(itemPropertyName, itemPath)
+      )}, (${JSON.stringify(schemaOptions)}))`;
     } else {
       result = `Type.Array(${collect(itemsSchemaObj)})`;
     }
+    if (!isRequiredAttribute) {
+      result = `Type.Optional(${result})`;
+    }
+    if (propertyName !== undefined) {
+      result = `${propertyName}: ${result}`;
+    }
+    return result + "\n";
+  } else if (typeof type === "undefined") {
+    let result = `Type.Unknown()`;
     if (!isRequiredAttribute) {
       result = `Type.Optional(${result})`;
     }
@@ -549,12 +573,10 @@ type PropertiesOfProperty = Record<string, any>;
  */
 const getProperties = (
   schema: Record<string, any>
-): (readonly [PropertyName, PropertiesOfProperty])[] => {
+): (readonly [PropertyName, PropertiesOfProperty])[] | undefined => {
   const properties = schema["properties"];
   if (properties === undefined) {
-    throw new Error(
-      "JSON schema was expected to have 'properties' attribute/property. Got: undefined"
-    );
+    return undefined;
   }
   const propertyNames = Object.keys(properties);
   const listWithPropertyObjects = propertyNames.map((currItem) => {
@@ -573,13 +595,35 @@ const getProperties = (
  *
  * @throws Error
  */
-const getType = (schemaObj: Record<string, any>): VALID_TYPE_VALUE => {
-  const type = schemaObj["type"];
+const getType = (
+  schemaObj: Record<string, any>,
+  propertyName?: string
+): VALID_TYPE_VALUE => {
+  let type = schemaObj["type"];
 
-  if (!VALID_TYPE_VALUES.includes(type)) {
+  if (type?.constructor === Array) {
+    type = type.filter((t) => t !== "null");
+    if (type.length > 1) {
+      throw new Error(
+        `[${propertyName}] Cannot handle multiple types value for 'type' attribute. Got: ${schemaObj["type"]}`
+      );
+    }
+    type = type[0];
+  }
+
+  if (
+    !type &&
+    schemaObj["default"] &&
+    Object.keys(schemaObj["default"]).length > 0
+  ) {
+    return "object";
+  }
+
+  if (!VALID_TYPE_VALUES.includes(type) && Object.keys(schemaObj).length > 0) {
     throw new Error(
-      `JSON schema had invalid value for 'type' attribute. Got: ${type}
-      Schema object was: ${JSON.stringify(schemaObj)}`
+      `JSON schema had invalid value for 'type' attribute in property _${propertyName}_. Got: ${type} Schema object was: ${JSON.stringify(
+        schemaObj
+      )}`
     );
   }
 
