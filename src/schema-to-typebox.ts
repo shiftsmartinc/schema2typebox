@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import { zip } from "fp-ts/Array";
 import $Refparser from "@apidevtools/json-schema-ref-parser";
-import { capitalize } from "./utils";
+import { buildPropertyPath, capitalize } from "./utils";
 
 /** Generates TypeBox code from JSON schema */
 export const schema2typebox = async (jsonSchema: string, opts?: { enumMode?: EnumModeOption, packageName?: PackageName }) => {
@@ -19,6 +19,14 @@ export const schema2typebox = async (jsonSchema: string, opts?: { enumMode?: Enu
   return `${generateRequiredImports()}
 
 ${customTypes}${enumCode}${typeForObj}\nexport const ${valueName} = ${typeBoxType}`;
+};
+
+const generateTypeForName = (name: string) => {
+  if (!name?.length) {
+    throw new Error(`Can't generate type for empty string. Got input: ${name}`);
+  }
+  const typeName = capitalize(name);
+  return `export type ${typeName} = Static<typeof ${name}>`;
 };
 
 /**
@@ -111,25 +119,19 @@ const isNotSchemaObj = (
   return schemaObj["not"] !== undefined;
 };
 
-const generateTypeForName = (name: string) => {
-  if (!name?.length) {
-    throw new Error(`Can't generate type for empty string. Got input: ${name}`);
-  }
-  const typeName = capitalize(name);
-  return `export type ${typeName} = Static<typeof ${name}>`;
-};
-const createUnionName = (propertyName: string) => {
+const createTypedName = (suffix: string) => (propertyName: string | string[]) => {
   if (!propertyName?.length) {
-    throw new Error("Can't create union name with empty string.");
+    throw new Error(`Can't create ${suffix} name with empty path or property name`);
   }
-  return `${capitalize(propertyName)}Union`;
-};
-const createEnumName = (propertyName: string) => {
-  if (!propertyName?.length) {
-    throw new Error("Can't create enum name with empty string.");
+  if (typeof propertyName === "string") {
+    return `${capitalize(propertyName)}${suffix}`;
   }
-  return `${capitalize(propertyName)}Enum`;
+  return `${propertyName.map((currItem) => capitalize(currItem)).join("")}${suffix}`;
 };
+
+const createEnumName = createTypedName('Enum');
+
+const createUnionName = createTypedName('Union');
 
 /**
  * Contains Typescript code for the enums that are created based on the JSON
@@ -146,6 +148,13 @@ let enumCode = "";
  */
 export const resetEnumCode = () => {
   enumCode = "";
+};
+
+/**
+ * Used to programatically retrieve the enum code. Used in tests.
+ */
+export const getEnumCode = () => {
+  return enumCode;
 };
 
 /**
@@ -205,7 +214,7 @@ export const collect = (
   schemaObj: Record<string, any>,
   requiredAttributes: string[] = [],
   propertyName?: string,
-  itemPropertyName?: string
+  itemPath?: string[]
 ): string => {
   const schemaOptions = getSchemaOptions(schemaObj).reduce<Record<string, any>>(
     (prev, [optionName, optionValue]) => {
@@ -226,11 +235,11 @@ export const collect = (
     const absolutePath = process.cwd() + "/" + relativePath;
     const schemaObjAsString = fs.readFileSync(absolutePath, "utf-8");
     const parsedSchemaObj = JSON.parse(schemaObjAsString);
-    return collect(parsedSchemaObj, requiredAttributes, propertyName);
+    return collect(parsedSchemaObj, requiredAttributes, propertyName, buildPropertyPath(propertyName, itemPath));
   }
 
   if (isEnumSchemaObj(schemaObj)) {
-    if (propertyName === undefined && !itemPropertyName) {
+    if (propertyName === undefined && !itemPath?.length) {
       throw new Error("cant create enum without propertyName or path");
     }
     const enumValues = schemaObj.enum;
@@ -239,17 +248,19 @@ export const collect = (
     );
     const pairs = zip(enumKeys, enumValues);
 
-    const enumName = createEnumName(propertyName || itemPropertyName || "");
     // create typescript enum
+    const enumName = createEnumName(buildPropertyPath(propertyName, itemPath));
     const enumInTypescript =
       pairs.reduce<string>((prev, [enumKey, enumValue]) => {
         const correctEnumValue =
           typeof enumValue === "string" ? `"${enumValue}"` : enumValue;
-        const correctEnumKey =
+        const validEnumKey =
           enumKey === "" ? "EMPTY_STRING" : enumKey.replace(/[-]/g, "_");
-        return `${prev}${correctEnumKey} = ${correctEnumValue},\n`;
+        return `${prev}${validEnumKey} = ${correctEnumValue},\n`;
       }, `export enum ${enumName} {\n`) + "}";
-    const unionName = createUnionName(propertyName || itemPropertyName || "");
+
+    // create typescript union
+    const unionName = createUnionName(buildPropertyPath(propertyName, itemPath));
     const unionInTypescript =
       enumValues.reduce((prev, enumValue) => {
         const correctEnumValue =
@@ -260,8 +271,9 @@ export const collect = (
 
     enumCode = [
       enumCode,
-      /enum/i.test(enumMode) && enumInTypescript,
-      /union/i.test(enumMode) && unionInTypescript,
+      /enum|prefer/i.test(enumMode) && enumInTypescript,
+      /prefer/i.test(enumMode) && "\n",
+      /union|prefer/i.test(enumMode) && unionInTypescript,
       "\n\n",
     ]
       .filter((x) => !!x)
@@ -376,7 +388,7 @@ export const collect = (
         : `${propertyName}: Type.${typeboxType}(\n${typeboxForProperties})`;
     } else {
       typeboxForProperties = propertiesOfObj.map(([propertyName, property]) => {
-        return collect(property, requiredAttributesOfObject, propertyName);
+        return collect(property, requiredAttributesOfObject, propertyName, buildPropertyPath(propertyName, itemPath));
       });
     }
     // propertyName will only be undefined for the "top level" schemaObj
@@ -432,11 +444,14 @@ export const collect = (
     const itemPropertyName = `${propertyName}Item`;
     let result = "";
     if (Object.keys(schemaOptions).length > 0) {
+      result = `Type.Array(${collect(itemsSchemaObj)}, (${JSON.stringify(
+        schemaOptions
+      )}))`;
       result = `Type.Array(${collect(
         itemsSchemaObj,
         undefined,
-        undefined,
-        itemPropertyName
+        undefined, 
+        buildPropertyPath(itemPropertyName, itemPath)
       )}, (${JSON.stringify(schemaOptions)}))`;
     } else {
       result = `Type.Array(${collect(itemsSchemaObj)})`;
@@ -614,7 +629,7 @@ const getType = (
 
   if (!VALID_TYPE_VALUES.includes(type) && Object.keys(schemaObj).length > 0) {
     throw new Error(
-      `[${propertyName}] JSON schema had invalid value for 'type' attribute. Got: ${type} Schemaobject was: ${JSON.stringify(
+      `JSON schema had invalid value for 'type' attribute in property _${propertyName}_. Got: ${type} Schema object was: ${JSON.stringify(
         schemaObj
       )}`
     );
