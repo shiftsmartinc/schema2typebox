@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import { zip } from "fp-ts/Array";
 import $Refparser from "@apidevtools/json-schema-ref-parser";
-import { capitalize } from "./utils";
+import { buildPropertyPath, capitalize } from "./utils";
 
 /** Generates TypeBox code from JSON schema */
 export const schema2typebox = async (jsonSchema: string) => {
@@ -116,12 +116,19 @@ const isNotSchemaObj = (
   return schemaObj["not"] !== undefined;
 };
 
-const createEnumName = (propertyName: string) => {
+const createTypedName = (suffix: string) => (propertyName: string | string[]) => {
   if (!propertyName?.length) {
-    throw new Error("Can't create enum name with empty string.");
+    throw new Error(`Can't create ${suffix} name with empty path or property name`);
   }
-  return `${capitalize(propertyName)}Enum`;
+  if (typeof propertyName === "string") {
+    return `${capitalize(propertyName)}${suffix}`;
+  }
+  return `${propertyName.map((currItem) => capitalize(currItem)).join("")}${suffix}`;
 };
+
+const createEnumName = createTypedName('Enum');
+
+const createUnionName = createTypedName('Union');
 
 /**
  * Contains Typescript code for the enums that are created based on the JSON
@@ -177,13 +184,6 @@ let enumMode: "union" | "enum" | "preferEnum" | "preferUnion" = "union";
 
 export const setEnumMode = (mode: typeof enumMode) => {
   enumMode = mode;
-};
-
-const createUnionName = (propertyName: string) => {
-  if (!propertyName?.length) {
-    throw new Error("Can't create union name with empty string.");
-  }
-  return `${capitalize(propertyName)}Union`;
 };
 
 type PackageName = string;
